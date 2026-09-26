@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../dashboard/dashboard_screen.dart';
 import 'cadastro_screen.dart';
 import 'reset_senha_screen.dart';
 
@@ -45,7 +46,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             radius: 12,
                             backgroundColor: AppTheme.turquesaPrincipal,
                           ),
-                          SizedBox(width: 8),
+                          const SizedBox(width: 8),
                           Text(
                             'Ohmae',
                             style: TextStyle(
@@ -184,10 +185,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: ElevatedButton(
                           onPressed: () {
                             if (_formKey.currentState!.validate()) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Acessando como Natália...'),
+                              // Navegação limpa que abre a Dashboard e destrói o histórico de telas anterior
+                              Navigator.pushAndRemoveUntil(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const DashboardScreen(),
                                 ),
+                                (route) => false,
                               );
                             }
                           },
@@ -209,7 +213,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Icon(Icons.arrow_forward, size: 20),
                             ],
                           ),
@@ -270,7 +274,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: AppTheme.turquesaPrincipal,
                       size: 20,
                     ),
-                    SizedBox(width: 12),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         'Seu espaço é privado, seguro e feito para cuidar com tranquilidade.',
