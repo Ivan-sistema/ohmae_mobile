@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-
-// Importa o arquivo de identidade visual que criamos no Passo 1
 import 'core/theme/app_theme.dart';
+import 'features/auth/login_screen.dart'; // O import que faltava para achar a classe!
 
 void main() {
   runApp(const OhmaeApp());
@@ -15,21 +14,8 @@ class OhmaeApp extends StatelessWidget {
     return MaterialApp(
       title: 'Ohmae',
       debugShowCheckedModeBanner: false,
-      // Aplica o tema sênior com as cores do seu logotipo
       theme: AppTheme.lightTheme,
-      // Tela temporária apenas para testarmos a inicialização limpa
-      home: const Scaffold(
-        body: Center(
-          child: Text(
-            'Ohmae Iniciado!',
-            style: TextStyle(
-              color: AppTheme.textoEscuro,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ),
+      home: const LoginScreen(), // Agora o compilador sabe exatamente o que é!
     );
   }
 }
