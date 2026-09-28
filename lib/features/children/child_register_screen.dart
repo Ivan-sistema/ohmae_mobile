@@ -17,7 +17,7 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
 
   // Inicia com os dados padrões do Davi conforme suas diretrizes sênior
   final TextEditingController _nomeController = TextEditingController(
-    text: 'Davi Silva',
+    text: 'Davi Ribeiro',
   );
   final TextEditingController _dataNascimentoController = TextEditingController(
     text: '2025-05-10',
@@ -182,11 +182,11 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
                           setState(() {
                             _generoSelecionado = v!;
                             if (_generoSelecionado == 'MENINA') {
-                              _nomeController.text = 'Esther Silva';
+                              _nomeController.text = 'Esther Francisco';
                               _restricoesController.text =
                                   'Nenhuma restrição médica cadastrada.';
                             } else {
-                              _nomeController.text = 'Davi Silva';
+                              _nomeController.text = 'Davi Francisco';
                               _restricoesController.text =
                                   'Alergia à proteína do leite (APLV)';
                             }

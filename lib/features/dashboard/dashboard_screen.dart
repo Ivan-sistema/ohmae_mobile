@@ -371,7 +371,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Natália Silva',
+                      'Natália Ribeiro',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,

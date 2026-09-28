@@ -15,7 +15,7 @@ class _CadastroScreenState extends State<CadastroScreen> {
 
   // Inputs pré-configurados com a Natália para acelerar seus testes
   final TextEditingController _nomeController =
-      TextEditingController(text: 'Natália Silva');
+      TextEditingController(text: 'Natália Ribeiro');
   final TextEditingController _emailController =
       TextEditingController(text: 'natalia@email.com');
   final TextEditingController _senhaController =
@@ -189,7 +189,7 @@ class _CadastroScreenState extends State<CadastroScreen> {
                               _nomeController.text = 'ohmae_baba';
                               _emailController.text = 'baba@email.com';
                             } else {
-                              _nomeController.text = 'Natália Silva';
+                              _nomeController.text = 'Natália Ribeiro';
                               _emailController.text = 'natalia@email.com';
                             }
                           });
