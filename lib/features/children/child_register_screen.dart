@@ -1,46 +1,40 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
 import '../../core/theme/app_theme.dart';
 
-class CadastroScreen extends StatefulWidget {
-  const CadastroScreen({super.key});
+class ChildRegisterScreen extends StatefulWidget {
+  const ChildRegisterScreen({super.key});
 
   @override
-  State<CadastroScreen> createState() => _CadastroScreenState();
+  State<ChildRegisterScreen> createState() => _ChildRegisterScreenState();
 }
 
-class _CadastroScreenState extends State<CadastroScreen> {
+class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  // Inputs pré-configurados com a Natália para acelerar seus testes
-  final TextEditingController _nomeController =
-      TextEditingController(text: 'Natália Ribeiro');
-  final TextEditingController _emailController =
-      TextEditingController(text: 'natalia@email.com');
-  final TextEditingController _senhaController =
-      TextEditingController(text: '12345678');
+  // Inicia com os dados padrões do Davi conforme suas diretrizes sênior
+  final TextEditingController _nomeController = TextEditingController(
+    text: 'Davi Ribeiro',
+  );
+  final TextEditingController _dataNascimentoController = TextEditingController(
+    text: '2025-05-10',
+  );
+  final TextEditingController _restricoesController = TextEditingController(
+    text: 'Alergia à proteína do leite (APLV)',
+  );
 
-  String _tipoUsuario = 'PAI_MAE'; // PAI_MAE ou CUIDADOR
-  bool _aceitouTermos = true;
+  String _generoSelecionado = 'MENINO'; // MENINO ou MENINA
   bool _carregando = false;
 
-  // Função assíncrona que dispara o cadastro real para o backend NestJS
-  void _cadastrarNoSupabase() async {
+  void _salvarCriancaNoSupabase() async {
     if (!_formKey.currentState!.validate()) return;
-    if (!_aceitouTermos) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Você precisa aceitar os Termos de Uso.'),
-        ),
-      );
-      return;
-    }
 
     setState(() => _carregando = true);
 
     try {
-      // O IP 10.0.2.2 mapeia diretamente o localhost do seu notebook de dentro do emulador Android
       final url = Uri.parse('http://10.0.2');
 
       final resposta = await http.post(
@@ -48,8 +42,8 @@ class _CadastroScreenState extends State<CadastroScreen> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'nome': _nomeController.text.trim(),
-          'email': _emailController.text.trim(),
-          'tipo': _tipoUsuario,
+          'data_nascimento': _dataNascimentoController.text.trim(),
+          'restricoes_medicas': _restricoesController.text.trim(),
         }),
       );
 
@@ -59,22 +53,22 @@ class _CadastroScreenState extends State<CadastroScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _tipoUsuario == 'PAI_MAE'
-                  ? '🚀 Perfil de Natália salvo com sucesso no Supabase!'
-                  : '🚀 Perfil de ohmae_baba salvo com sucesso no Supabase!',
+              _generoSelecionado == 'MENINO'
+                  ? '👶 Perfil do Davi criado com sucesso no Ohmae!'
+                  : '👶 Perfil da Esther criado com sucesso no Ohmae!',
             ),
             backgroundColor: AppTheme.turquesaPrincipal,
           ),
         );
-        Navigator.pop(context); // Fecha a tela e retorna ao login
+        Navigator.pop(context); // Retorna para o painel principal
       } else {
-        throw Exception(dadosResposta['message'] ?? 'Erro no cadastro.');
+        throw Exception(dadosResposta['message'] ?? 'Erro ao salvar bebê.');
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '❌ Erro na integração: ${e.toString().replaceAll('Exception:', '')}',
+            '❌ Erro ao salvar: ${e.toString().replaceAll('Exception:', '')}',
           ),
           backgroundColor: Colors.redAccent,
         ),
@@ -97,7 +91,10 @@ class _CadastroScreenState extends State<CadastroScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: AppTheme.textoEscuro),
+                  icon: const Icon(
+                    Icons.arrow_back,
+                    color: AppTheme.textoEscuro,
+                  ),
                   onPressed: () => Navigator.pop(context),
                 ),
               ),
@@ -129,17 +126,16 @@ class _CadastroScreenState extends State<CadastroScreen> {
               ),
               const SizedBox(height: 24),
               const Text(
-                'Criar sua conta',
+                'Adicionar Criança',
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 26,
                   fontWeight: FontWeight.bold,
                   color: AppTheme.textoEscuro,
                 ),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Gerencie e compartilhe a rotina de cuidado com segurança.',
-                textAlign: TextAlign.center,
+                'Cadastre o perfil para iniciar o acompanhamento diário.',
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
               const SizedBox(height: 24),
@@ -161,11 +157,11 @@ class _CadastroScreenState extends State<CadastroScreen> {
                   child: Column(
                     children: [
                       DropdownButtonFormField<String>(
-                        value: _tipoUsuario,
+                        value: _generoSelecionado,
                         decoration: InputDecoration(
-                          labelText: 'Você é:',
+                          labelText: 'Selecione:',
                           prefixIcon: const Icon(
-                            Icons.badge_outlined,
+                            Icons.child_care,
                             color: AppTheme.turquesaPrincipal,
                           ),
                           border: OutlineInputBorder(
@@ -174,23 +170,25 @@ class _CadastroScreenState extends State<CadastroScreen> {
                         ),
                         items: const [
                           DropdownMenuItem(
-                            value: 'PAI_MAE',
-                            child: Text('Mãe / Pai '),
+                            value: 'MENINO',
+                            child: Text('Menino (Davi)'),
                           ),
                           DropdownMenuItem(
-                            value: 'CUIDADOR',
-                            child: Text('Cuidador (a) / Babá '),
+                            value: 'MENINA',
+                            child: Text('Menina (Esther)'),
                           ),
                         ],
                         onChanged: (v) {
                           setState(() {
-                            _tipoUsuario = v!;
-                            if (_tipoUsuario == 'CUIDADOR') {
-                              _nomeController.text = 'ohmae_baba';
-                              _emailController.text = 'baba@email.com';
+                            _generoSelecionado = v!;
+                            if (_generoSelecionado == 'MENINA') {
+                              _nomeController.text = 'Esther Francisco';
+                              _restricoesController.text =
+                                  'Nenhuma restrição médica cadastrada.';
                             } else {
-                              _nomeController.text = 'Natália Ribeiro';
-                              _emailController.text = 'natalia@email.com';
+                              _nomeController.text = 'Davi Francisco';
+                              _restricoesController.text =
+                                  'Alergia à proteína do leite (APLV)';
                             }
                           });
                         },
@@ -203,72 +201,57 @@ class _CadastroScreenState extends State<CadastroScreen> {
                           fontWeight: FontWeight.w500,
                         ),
                         decoration: InputDecoration(
-                          labelText: 'Nome',
-                          prefixIcon: const Icon(Icons.person_outline),
+                          labelText: 'Nome do Bebê',
+                          prefixIcon: const Icon(Icons.face_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        validator: (v) =>
-                            v == null || v.isEmpty ? 'Insira o nome' : null,
+                        validator: (v) => v == null || v.isEmpty
+                            ? 'Insira o nome da criança'
+                            : null,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
+                        controller: _dataNascimentoController,
                         style: const TextStyle(
                           color: AppTheme.textoEscuro,
                           fontWeight: FontWeight.w500,
                         ),
                         decoration: InputDecoration(
-                          labelText: 'E-mail',
-                          prefixIcon: const Icon(Icons.mail_outline),
+                          labelText: 'Data de Nascimento',
+                          hintText: 'AAAA-MM-DD',
+                          prefixIcon: const Icon(Icons.calendar_today_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        validator: (v) => v == null || !v.contains('@')
-                            ? 'Insira um e-mail válido'
+                        validator: (v) => v == null || v.isEmpty
+                            ? 'Insira a data de nascimento'
                             : null,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
-                        controller: _senhaController,
-                        obscureText: true,
+                        controller: _restricoesController,
+                        maxLines: 2,
                         style: const TextStyle(color: AppTheme.textoEscuro),
                         decoration: InputDecoration(
-                          labelText: 'Senha',
-                          prefixIcon: const Icon(Icons.lock_outline),
+                          labelText: 'Restrições Médicas / Observações',
+                          alignLabelWithHint: true,
+                          prefixIcon: const Icon(Icons.healing_outlined),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        validator: (v) => v == null || v.length < 8
-                            ? 'Mínimo de 8 caracteres'
-                            : null,
                       ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Checkbox(
-                            value: _aceitouTermos,
-                            activeColor: AppTheme.turquesaPrincipal,
-                            onChanged: (v) => setState(() => _aceitouTermos = v!),
-                          ),
-                          const Expanded(
-                            child: Text(
-                              'Aceito os termos de privacidade da Ohmae.',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 24),
                       SizedBox(
                         width: double.infinity,
                         height: 54,
                         child: ElevatedButton(
-                          onPressed: _carregando ? null : _cadastrarNoSupabase,
+                          onPressed: _carregando
+                              ? null
+                              : _salvarCriancaNoSupabase,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.turquesaPrincipal,
                             foregroundColor: Colors.white,
@@ -285,14 +268,14 @@ class _CadastroScreenState extends State<CadastroScreen> {
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Text(
-                                      'Concluir Cadastro',
+                                      'Salvar Perfil',
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     SizedBox(width: 8),
-                                    Icon(Icons.check, size: 18),
+                                    Icon(Icons.arrow_forward, size: 18),
                                   ],
                                 ),
                         ),
