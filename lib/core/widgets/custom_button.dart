@@ -23,26 +23,24 @@ class CustomButton extends StatelessWidget {
       child: ElevatedButton(
         onPressed: carregando ? null : onPressed,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.turquesaPrincipal,
+          backgroundColor: AppTheme.aquaPrincipal,
           foregroundColor: Colors.white,
-          disabledBackgroundColor: Colors.grey.withValues(alpha: 0.2),
-          disabledForegroundColor: Colors.grey.withValues(alpha: 0.5),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          // Cores opacas recomendadas para o estado Desabilitado do manual
+          disabledBackgroundColor: AppTheme.bordaInativa,
+          disabledForegroundColor: Colors.grey.withValues(alpha: 0.6),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.raioCampo)),
           elevation: 0,
         ),
         child: carregando
             ? const SizedBox(
-                height: 24,
-                width: 24,
-                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                height: 22,
+                width: 22,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
               )
             : Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    texto,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
+                  Text(texto, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   if (iconeAcao != null) ...[
                     const SizedBox(width: 8),
                     Icon(iconeAcao, size: 18),
