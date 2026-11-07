@@ -5,12 +5,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../../core/config/api_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/custom_button.dart';
+import '../../core/widgets/custom_text_field.dart';
 
-/// Erro retornado pela API (status fora de 2xx ou `sucesso: false`).
 class _ApiException implements Exception {
   const _ApiException(this.mensagem);
-
   final String mensagem;
 }
 
@@ -22,77 +23,51 @@ class CadastroScreen extends StatefulWidget {
 }
 
 class _CadastroScreenState extends State<CadastroScreen> {
-  // TODO: ajuste host, porta e rota para o seu backend NestJS.
-  // Emulador Android: 10.0.2.2 | Dispositivo físico: IP da sua máquina.
-  static const String _apiBaseUrl = 'http://10.0.2.2:3000';
-  static const String _rotaCadastro = '/usuarios';
-  static const Duration _timeout = Duration(seconds: 10);
-
   static final RegExp _emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-
   final _formKey = GlobalKey<FormState>();
 
   final _nomeController = TextEditingController();
   final _emailController = TextEditingController();
   final _senhaController = TextEditingController();
-  final _confirmarSenhaController = TextEditingController();
 
   final _emailFocus = FocusNode();
   final _senhaFocus = FocusNode();
-  final _confirmarSenhaFocus = FocusNode();
 
-  String _perfilSelecionado = 'MAE';
+  bool _senhaOculta = true;
   bool _aceitouTermos = false;
   bool _carregando = false;
-  bool _senhaOculta = true;
-  bool _confirmarSenhaOculta = true;
 
-  /// Verificação silenciosa (não exibe erro nenhum na tela): o botão só habilita
-  /// quando todos os campos passam nos validators E os termos foram aceitos.
   bool get _formularioValido =>
       _validarNome(_nomeController.text) == null &&
       _validarEmail(_emailController.text) == null &&
       _validarSenha(_senhaController.text) == null &&
-      _validarConfirmacao(_confirmarSenhaController.text) == null &&
       _aceitouTermos;
 
   @override
   void initState() {
     super.initState();
-    for (final c in [
-      _nomeController,
-      _emailController,
-      _senhaController,
-      _confirmarSenhaController,
-    ]) {
-      c.addListener(_atualizarEstado);
-    }
+    _nomeController.addListener(_atualizarEstado);
+    _emailController.addListener(_atualizarEstado);
+    _senhaController.addListener(_atualizarEstado);
   }
-
-  void _atualizarEstado() => setState(() {});
 
   @override
   void dispose() {
     _nomeController.dispose();
     _emailController.dispose();
     _senhaController.dispose();
-    _confirmarSenhaController.dispose();
     _emailFocus.dispose();
     _senhaFocus.dispose();
-    _confirmarSenhaFocus.dispose();
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // Lógica
-  // ---------------------------------------------------------------------------
+  void _atualizarEstado() => setState(() {});
 
   Future<void> _cadastrarFamilia() async {
     if (_carregando) return;
 
     FocusScope.of(context).unfocus();
 
-    // Segurança extra: o botão já só habilita com tudo válido.
     if (!_formularioValido || !_formKey.currentState!.validate()) return;
 
     setState(() => _carregando = true);
@@ -100,7 +75,7 @@ class _CadastroScreenState extends State<CadastroScreen> {
     try {
       final resposta = await http
           .post(
-            Uri.parse('$_apiBaseUrl$_rotaCadastro'),
+            ApiConfig.uri(ApiConfig.rotaCadastro),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'nome': _nomeController.text.trim(),
@@ -109,98 +84,49 @@ class _CadastroScreenState extends State<CadastroScreen> {
               'tipo': 'PAI_MAE',
             }),
           )
-          .timeout(_timeout);
+          .timeout(ApiConfig.timeout);
 
       final dados = _decodificarResposta(resposta);
-
-      final sucesso = resposta.statusCode == 200 ||
-          resposta.statusCode == 201 ||
-          dados['sucesso'] == true;
+      final sucesso = resposta.statusCode == 200 || resposta.statusCode == 201 || dados['sucesso'] == true;
 
       if (!sucesso) {
-        throw _ApiException(_extrairMensagem(dados));
+        throw _ApiException(dados['message'] ?? 'Erro interno no cadastro.');
       }
 
       if (!mounted) return;
-      _mostrarAlerta(
-        '🚀 Conta criada com sucesso!',
-        AppTheme.turquesaPrincipal,
-      );
+      _mostrarAlerta('🚀 Conta criada com sucesso!', AppTheme.aquaPrincipal);
       Navigator.pop(context);
     } on TimeoutException {
-      _mostrarAlerta(
-        '❌ O servidor demorou para responder. Tente novamente.',
-        Colors.redAccent,
-      );
+      _mostrarAlerta('❌ O servidor demorou para responder. Tente novamente.', Colors.redAccent);
     } on SocketException {
-      _mostrarAlerta(
-        '❌ Sem conexão com o servidor. Verifique sua internet.',
-        Colors.redAccent,
-      );
-    } on http.ClientException {
-      _mostrarAlerta(
-        '❌ Não foi possível se conectar ao servidor.',
-        Colors.redAccent,
-      );
-    } on FormatException {
-      _mostrarAlerta(
-        '❌ Resposta inválida do servidor. Contate o suporte.',
-        Colors.redAccent,
-      );
+      _mostrarAlerta('❌ Sem conexão com o servidor. Verifique sua internet.', Colors.redAccent);
     } on _ApiException catch (e) {
       _mostrarAlerta('❌ ${e.mensagem}', Colors.redAccent);
     } catch (_) {
-      _mostrarAlerta(
-        '❌ Ocorreu um erro inesperado. Tente novamente.',
-        Colors.redAccent,
-      );
+      _mostrarAlerta('❌ Ocorreu um erro inesperado. Tente novamente.', Colors.redAccent);
     } finally {
       if (mounted) setState(() => _carregando = false);
     }
   }
 
-  /// Converte o corpo em Map. Lança [FormatException] se estiver vazio/inválido.
   Map<String, dynamic> _decodificarResposta(http.Response resposta) {
-    if (resposta.body.isEmpty) {
-      throw const FormatException('Resposta vazia.');
-    }
-
+    if (resposta.body.isEmpty) throw const FormatException('Resposta vazia.');
     final decodificado = jsonDecode(resposta.body);
-    if (decodificado is! Map<String, dynamic>) {
-      throw const FormatException('Formato inesperado.');
-    }
+    if (decodificado is! Map<String, dynamic>) throw const FormatException('Formato inesperado.');
     return decodificado;
   }
 
-  /// O NestJS pode devolver `message` como String ou como lista (validação).
-  String _extrairMensagem(Map<String, dynamic> dados) {
-    final mensagem = dados['message'];
-    if (mensagem is List && mensagem.isNotEmpty) {
-      return mensagem.join('\n');
-    }
-    if (mensagem is String && mensagem.isNotEmpty) {
-      return mensagem;
-    }
-    return 'Erro interno no cadastro.';
-  }
-
-  void _mostrarAlerta(String mensagem, Color cor) {
+  void _mostrarAlerta(String mensaje, Color cor) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(mensagem), backgroundColor: cor));
+      ..showSnackBar(SnackBar(content: Text(mensaje), backgroundColor: cor));
   }
-
-  // ---------------------------------------------------------------------------
-  // Validators
-  // ---------------------------------------------------------------------------
 
   String? _validarNome(String? v) {
     final nome = v?.trim() ?? '';
     if (nome.isEmpty) return 'Insira seu nome completo';
-    if (nome.split(RegExp(r'\s+')).length < 2) {
-      return 'Informe nome e sobrenome';
-    }
+    if (nome.split(RegExp(r'\s+')).length < 2) return 'Informe nome e sobrenome';
     return null;
   }
 
@@ -217,47 +143,10 @@ class _CadastroScreenState extends State<CadastroScreen> {
     return null;
   }
 
-  String? _validarConfirmacao(String? v) {
-    if (v == null || v.isEmpty) return 'Confirme sua senha';
-    if (v != _senhaController.text) return 'As senhas digitadas não conferem';
-    return null;
-  }
-
-  // ---------------------------------------------------------------------------
-  // UI
-  // ---------------------------------------------------------------------------
-
-  InputDecoration _decoracao({
-    required String label,
-    required String hint,
-    required IconData icone,
-    Widget? sufixo,
-  }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icone),
-      suffixIcon: sufixo,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-    );
-  }
-
-  Widget _botaoVisibilidade({
-    required bool oculta,
-    required VoidCallback onPressed,
-  }) {
-    return IconButton(
-      icon: Icon(
-        oculta ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-        color: Colors.grey,
-      ),
-      onPressed: onPressed,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.cremeFundo,
       body: SafeArea(
         child: SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -268,270 +157,124 @@ class _CadastroScreenState extends State<CadastroScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton(
-                  icon: const Icon(
-                    Icons.arrow_back,
-                    color: AppTheme.textoEscuro,
-                  ),
+                  icon: const Icon(Icons.arrow_back, color: AppTheme.textoPrincipal),
                   onPressed: () => Navigator.pop(context),
                 ),
               ),
-              _buildLogo(),
-              const SizedBox(height: 24),
-              const Text(
-                'Cadastro de Gestores',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.textoEscuro,
+              SizedBox(
+                height: 50,
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.child_care, color: AppTheme.aquaPrincipal, size: 36),
                 ),
               ),
-              const SizedBox(height: 8),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  'Crie a conta master da família. Apenas os pais '
-                  'gerenciam acessos e cadastram os bebês.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              _buildFormCard(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return SizedBox(
-      height: 70,
-      child: Image.asset(
-        'assets/images/logo.png',
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 12,
-              backgroundColor: AppTheme.turquesaPrincipal,
-            ),
-            SizedBox(width: 8),
-            Text(
-              'Ohmae',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textoEscuro,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFormCard() {
-    final mae = _perfilSelecionado == 'MAE';
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: AutofillGroup(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _perfilSelecionado,
-                decoration: _decoracao(
-                  label: 'Seu Perfil',
-                  hint: '',
-                  icone: Icons.family_restroom,
-                ).copyWith(
-                  prefixIcon: const Icon(
-                    Icons.family_restroom,
-                    color: AppTheme.turquesaPrincipal,
-                  ),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'MAE', child: Text('Mãe')),
-                  DropdownMenuItem(value: 'PAI', child: Text('Pai')),
-                ],
-                onChanged: (v) {
-                  if (v != null) setState(() => _perfilSelecionado = v);
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _nomeController,
-                textInputAction: TextInputAction.next,
-                textCapitalization: TextCapitalization.words,
-                autofillHints: const [AutofillHints.name],
-                onFieldSubmitted: (_) => _emailFocus.requestFocus(),
-                style: const TextStyle(
-                  color: AppTheme.textoEscuro,
-                  fontWeight: FontWeight.w500,
-                ),
-                decoration: _decoracao(
-                  label: 'Nome Completo',
-                  hint: mae ? 'Ex: Natália Silva' : 'Ex: Ivan Francisco',
-                  icone: Icons.person_outline,
-                ),
-                validator: _validarNome,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _emailController,
-                focusNode: _emailFocus,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-                autofillHints: const [AutofillHints.email],
-                onFieldSubmitted: (_) => _senhaFocus.requestFocus(),
-                style: const TextStyle(
-                  color: AppTheme.textoEscuro,
-                  fontWeight: FontWeight.w500,
-                ),
-                decoration: _decoracao(
-                  label: 'E-mail',
-                  hint: mae ? 'Ex: natalia@email.com' : 'Ex: ivan@email.com',
-                  icone: Icons.mail_outline,
-                ),
-                validator: _validarEmail,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _senhaController,
-                focusNode: _senhaFocus,
-                obscureText: _senhaOculta,
-                textInputAction: TextInputAction.next,
-                autofillHints: const [AutofillHints.newPassword],
-                onFieldSubmitted: (_) => _confirmarSenhaFocus.requestFocus(),
-                style: const TextStyle(color: AppTheme.textoEscuro),
-                decoration: _decoracao(
-                  label: 'Crie uma Senha',
-                  hint: 'Mínimo de 8 caracteres',
-                  icone: Icons.lock_outline,
-                  sufixo: _botaoVisibilidade(
-                    oculta: _senhaOculta,
-                    onPressed: () =>
-                        setState(() => _senhaOculta = !_senhaOculta),
-                  ),
-                ),
-                validator: _validarSenha,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _confirmarSenhaController,
-                focusNode: _confirmarSenhaFocus,
-                obscureText: _confirmarSenhaOculta,
-                textInputAction: TextInputAction.done,
-                autofillHints: const [AutofillHints.newPassword],
-                onFieldSubmitted: (_) {
-                  if (_formularioValido) _cadastrarFamilia();
-                },
-                style: const TextStyle(color: AppTheme.textoEscuro),
-                decoration: _decoracao(
-                  label: 'Confirme sua Senha',
-                  hint: 'Digite a senha novamente',
-                  icone: Icons.lock_reset_outlined,
-                  sufixo: _botaoVisibilidade(
-                    oculta: _confirmarSenhaOculta,
-                    onPressed: () => setState(
-                      () => _confirmarSenhaOculta = !_confirmarSenhaOculta,
+              const SizedBox(height: 32),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      'Comece a cuidar com a\nOhmae',
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppTheme.textoPrincipal, height: 1.2, letterSpacing: -0.5),
                     ),
                   ),
-                ),
-                validator: _validarConfirmacao,
-              ),
-              const SizedBox(height: 12),
-              _buildTermos(),
-              const SizedBox(height: 16),
-              _buildBotaoCadastrar(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTermos() {
-    return Row(
-      children: [
-        Checkbox(
-          value: _aceitouTermos,
-          activeColor: AppTheme.turquesaPrincipal,
-          onChanged: (v) => setState(() => _aceitouTermos = v ?? false),
-        ),
-        Expanded(
-          child: GestureDetector(
-            onTap: () => setState(() => _aceitouTermos = !_aceitouTermos),
-            child: const Text(
-              'Declaro que sou o responsável legal e aceito os termos.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBotaoCadastrar() {
-    return SizedBox(
-      width: double.infinity,
-      height: 54,
-      child: ElevatedButton(
-        onPressed:
-            (_formularioValido && !_carregando) ? _cadastrarFamilia : null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.turquesaPrincipal,
-          foregroundColor: Colors.white,
-          // Cinza quando incompleto; mantém o turquesa enquanto carrega.
-          disabledBackgroundColor: _carregando
-              ? AppTheme.turquesaPrincipal
-              : Colors.grey.withValues(alpha: 0.2),
-          disabledForegroundColor:
-              _carregando ? Colors.white : Colors.grey.withValues(alpha: 0.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 0,
-        ),
-        child: _carregando
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2.5,
-                ),
-              )
-            : const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    'Criar Conta Família',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(width: 8),
-                  Icon(Icons.arrow_forward, size: 18),
+                  SizedBox(height: 8),
+                  Text('Crie seu acesso básico. Leva menos de um minuto.', style: TextStyle(fontSize: 14, color: Colors.grey)),
                 ],
               ),
-      ),
-    );
-  }
+              const SizedBox(height: 32),
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(AppTheme.raioCartao),
+                  boxShadow: AppTheme.sombraSutil,
+                ),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    children: [
+                      CustomTextField(
+                        controller: _nomeController,
+                        label: 'Nome',
+                        hintText: 'Como podemos chamar você?',
+                        prefixIcon: Icons.person_outline,
+                        textCapitalization: TextCapitalization.words,
+                        textInputAction: TextInputAction.next,
+                        onFieldSubmitted: (_) => FocusScope.of(context).requestFocus(_emailFocus),
+                        validator: _validarNome,
+                      ),
+                      const SizedBox(height: 16),
+                      CustomTextField(
+                        controller: _emailController,
+                        focusNode: _emailFocus,
+                        label: 'E-mail',
+                        hintText: 'voce@email.com',
+                        prefixIcon: Icons.mail_outline,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        onFieldSubmitted: (_) => FocusScope.of(context).requestFocus(_senhaFocus),
+                        validator: _validarEmail,
+                      ),
+                      const SizedBox(height: 16),
+                      CustomTextField(
+                        controller: _senhaController,
+                        focusNode: _senhaFocus,
+                        obscureText: _senhaOculta,
+                        label: 'Senha',
+                        hintText: 'Mínimo de 8 caracteres',
+                        prefixIcon: Icons.lock_outline,
+                        textInputAction: TextInputAction.done,
+                        suffixIcon: IconButton(
+                          icon: Icon(_senhaOculta ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: Colors.grey),
+                          onPressed: () => setState(() => _senhaOculta = !_senhaOculta),
+                        ),
+                        validator: _validarSenha,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: _aceitouTermos,
+                            activeColor: AppTheme.aquaPrincipal,
+                            onChanged: (v) => setState(() => _aceitouTermos = v ?? false),
+                          ),
+                          const Expanded(
+                            child: Text(
+                              'Li e aceito os Termos de Uso e a Política de Privacidade.',
+                              style: TextStyle(fontSize: 12, color: AppTheme.textoPrincipal, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      CustomButton(
+                        texto: 'Criar conta',
+                        carregando: _carregando,
+                        iconeAcao: Icons.arrow_forward,
+                        onPressed: _formularioValido ? _cadastrarFamilia : null,
+),
+const SizedBox(height: 24),
+Row(
+mainAxisAlignment: MainAxisAlignment.center,
+children: [
+const Text('Já tem uma conta? ', style: TextStyle(color: Colors.grey, fontSize: 13)),
+GestureDetector(
+onTap: () => Navigator.pop(context),
+child: const Text('Entrar', style: TextStyle(color: AppTheme.aquaPrincipal, fontWeight: FontWeight.bold, fontSize: 13)),
+),
+],
+),
+],
+),
+),
+),
+],
+),
+),
+),
+);
+}
 }
