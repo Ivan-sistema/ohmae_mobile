@@ -1,140 +1,304 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
+import '../../core/config/api_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../dashboard/dashboard_screen.dart';
+
+/// Erro retornado pela API (status fora de 2xx).
+class _ApiException implements Exception {
+  const _ApiException(this.mensagem);
+
+  final String mensagem;
+}
 
 class ChildRegisterScreen extends StatefulWidget {
-  const ChildRegisterScreen({super.key});
+  const ChildRegisterScreen({
+    super.key,
+    required this.usuarioId,
+    required this.token,
+  });
+
+  /// Responsável logado que está cadastrando a criança.
+  final String usuarioId;
+  final String token;
 
   @override
   State<ChildRegisterScreen> createState() => _ChildRegisterScreenState();
 }
 
 class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
+  static const int _totalEtapas = 5; // barras de progresso (a 6ª é o final)
+  static const int _etapaFinal = 5;
+
   final PageController _pageController = PageController();
   int _etapaAtual = 0;
   bool _carregando = false;
 
-  // Controllers e estados padronizados conforme o layout enviado (Ex: Lia)
-  final TextEditingController _nomeController =
-      TextEditingController(text: 'Lia Martins');
-  final TextEditingController _apelidoController =
-      TextEditingController(text: 'Lia');
-  final TextEditingController _dataNascimentoController =
-      TextEditingController(text: '14 de Maio de 2024');
-  final TextEditingController _alergiaController =
-      TextEditingController(text: 'Proteína do leite');
-  final TextEditingController _restricoesAlimentaresController =
-      TextEditingController();
-  final TextEditingController _medicamentosController = TextEditingController();
-  final TextEditingController _condicoesSaudeController =
-      TextEditingController();
-  final TextEditingController _responsavelController =
-      TextEditingController(text: 'Rafael Martins');
-  final TextEditingController _vinculoController =
-      TextEditingController(text: 'Pai');
-  final TextEditingController _contatoEmergenciaController =
-      TextEditingController(text: 'Marina - (11) 98821-1040');
+  // Todos os campos começam vazios: nenhum dado pessoal fixo no código.
+  final _nomeController = TextEditingController();
+  final _apelidoController = TextEditingController();
+  final _dataNascimentoController = TextEditingController();
+  final _alergiaController = TextEditingController();
+  final _restricoesAlimentaresController = TextEditingController();
+  final _medicamentosController = TextEditingController();
+  final _condicoesSaudeController = TextEditingController();
+  final _responsavelController = TextEditingController();
+  final _vinculoController = TextEditingController();
+  final _contatoEmergenciaController = TextEditingController();
 
+  late final List<TextEditingController> _controllers = [
+    _nomeController,
+    _apelidoController,
+    _dataNascimentoController,
+    _alergiaController,
+    _restricoesAlimentaresController,
+    _medicamentosController,
+    _condicoesSaudeController,
+    _responsavelController,
+    _vinculoController,
+    _contatoEmergenciaController,
+  ];
+
+  DateTime? _dataNascimento;
   String _generoSelecionado = 'MENINA';
+  String _estadoRotina = 'PREVISIVEL';
+  bool _adicionarCuidador = false;
+
+  /// Etapa 2 exige nome e data de nascimento para avançar.
+  bool get _etapa2Valida =>
+      _nomeController.text.trim().length >= 2 && _dataNascimento != null;
+
+  /// Nome usado nos títulos: apelido, ou primeiro nome, ou texto neutro.
+  String get _nomeExibicao {
+    final apelido = _apelidoController.text.trim();
+    if (apelido.isNotEmpty) return apelido;
+    final nome = _nomeController.text.trim();
+    if (nome.isNotEmpty) return nome.split(RegExp(r'\s+')).first;
+    return 'seu pequeno';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in _controllers) {
+      c.addListener(_atualizarEstado);
+    }
+  }
 
   @override
   void dispose() {
-    _nomeController.dispose();
-    _apelidoController.dispose();
-    _dataNascimentoController.dispose();
-    _alergiaController.dispose();
-    _restricoesAlimentaresController.dispose();
-    _medicamentosController.dispose();
-    _condicoesSaudeController.dispose();
-    _responsavelController.dispose();
-    _vinculoController.dispose();
-    _contatoEmergenciaController.dispose();
+    for (final c in _controllers) {
+      c.dispose();
+    }
     _pageController.dispose();
     super.dispose();
   }
 
+  void _atualizarEstado() => setState(() {});
+
+  // ---------------------------------------------------------------------------
+  // Navegação entre etapas
+  // ---------------------------------------------------------------------------
+
   void _avancar() {
-    if (_etapaAtual < 5) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
-    }
+    if (!mounted || _etapaAtual >= _etapaFinal) return;
+    _pageController.nextPage(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _voltar() {
+    if (_carregando) return;
+
     if (_etapaAtual > 0) {
       _pageController.previousPage(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
       );
     } else {
-      Navigator.pop(context);
+      // Se esta for a única tela da pilha, não há para onde voltar.
+      Navigator.maybePop(context);
     }
   }
 
-  void _salvarNoSupabase() async {
-    setState(() => _carregando = true);
-    try {
-      final url = Uri.parse('http://10.0.2');
-      final resposta = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'nome': _nomeController.text.trim(),
-          'data_nascimento': '2024-05-14', // Padrão ISO para o banco
-          'restricoes_medicas': _alergiaController.text.trim(),
-        }),
+  void _irParaDashboard() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DashboardScreen(
+          usuarioId: widget.usuarioId,
+          token: widget.token,
+        ),
+      ),
+      (route) => false,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Data de nascimento
+  // ---------------------------------------------------------------------------
+
+  String _doisDigitos(int n) => n.toString().padLeft(2, '0');
+
+  String _formatarData(DateTime d) =>
+      '${_doisDigitos(d.day)}/${_doisDigitos(d.month)}/${d.year}';
+
+  /// Padrão ISO (yyyy-MM-dd) para o banco.
+  String _dataIso(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${_doisDigitos(d.month)}-${_doisDigitos(d.day)}';
+
+  Future<void> _selecionarData() async {
+    FocusScope.of(context).unfocus();
+
+    final agora = DateTime.now();
+    final escolhida = await showDatePicker(
+      context: context,
+      initialDate: _dataNascimento ?? agora,
+      firstDate: DateTime(agora.year - 18),
+      lastDate: agora,
+      helpText: 'Data de nascimento',
+    );
+
+    if (escolhida == null || !mounted) return;
+
+    setState(() {
+      _dataNascimento = escolhida;
+      _dataNascimentoController.text = _formatarData(escolhida);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // API
+  // ---------------------------------------------------------------------------
+
+  Future<void> _salvarCrianca() async {
+    if (_carregando) return;
+
+    final dataNascimento = _dataNascimento;
+    if (!_etapa2Valida || dataNascimento == null) {
+      _mostrarAlerta(
+        'Informe o nome e a data de nascimento da criança.',
+        Colors.orangeAccent,
       );
+      return;
+    }
 
-      if (resposta.statusCode == 201) {
-        _avancar(); // Vai para a tela final de sucesso
-      } else {
-        throw Exception('Falha ao registrar no Supabase');
+    FocusScope.of(context).unfocus();
+    setState(() => _carregando = true);
+
+    try {
+      final resposta = await http
+          .post(
+            ApiConfig.uri(ApiConfig.rotaCriancas),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${widget.token}',
+            },
+            body: jsonEncode({
+              'nome': _nomeController.text.trim(),
+              'data_nascimento': _dataIso(dataNascimento),
+              'restricoes_medicas': _alergiaController.text.trim(),
+            }),
+          )
+          .timeout(ApiConfig.timeout);
+
+      final sucesso = resposta.statusCode == 200 || resposta.statusCode == 201;
+      if (!sucesso) {
+        throw _ApiException(_mensagemDeErro(resposta));
       }
-    } catch (e) {
-      _avancar(); // Avança no MVP mesmo sem rede para não travar seu teste visual
+
+      // Só avança para a tela final se o cadastro foi realmente salvo.
+      _avancar();
+    } on TimeoutException {
+      _mostrarAlerta(
+        '❌ O servidor demorou para responder. Tente novamente.',
+        Colors.redAccent,
+      );
+    } on SocketException {
+      _mostrarAlerta(
+        '❌ Sem conexão com o servidor. Verifique sua internet.',
+        Colors.redAccent,
+      );
+    } on http.ClientException {
+      _mostrarAlerta(
+        '❌ Não foi possível se conectar ao servidor.',
+        Colors.redAccent,
+      );
+    } on _ApiException catch (e) {
+      _mostrarAlerta('❌ ${e.mensagem}', Colors.redAccent);
+    } catch (_) {
+      _mostrarAlerta(
+        '❌ Ocorreu um erro inesperado. Tente novamente.',
+        Colors.redAccent,
+      );
     } finally {
-      if (mounted) {
-        setState(() => _carregando = false);
-      }
+      if (mounted) setState(() => _carregando = false);
     }
   }
+
+  /// Extrai a mensagem de erro da API sem quebrar se o corpo for vazio/inválido.
+  String _mensagemDeErro(http.Response resposta) {
+    try {
+      final dados = jsonDecode(resposta.body);
+      if (dados is Map<String, dynamic>) {
+        final mensagem = dados['message'];
+        if (mensagem is List && mensagem.isNotEmpty) {
+          return mensagem.join('\n');
+        }
+        if (mensagem is String && mensagem.isNotEmpty) {
+          return mensagem;
+        }
+      }
+    } catch (_) {
+      // Corpo vazio ou não-JSON: usa a mensagem padrão abaixo.
+    }
+    return 'Não foi possível salvar o cadastro. Tente novamente.';
+  }
+
+  void _mostrarAlerta(String mensagem, Color cor) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(mensagem), backgroundColor: cor));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
+    final naEtapaFinal = _etapaAtual == _etapaFinal;
+    // Etapas opcionais (cuidados e ritmo) podem ser puladas.
+    final podePular = _etapaAtual == 2 || _etapaAtual == 3;
+
     return Scaffold(
-      backgroundColor: AppTheme.fundoCreme,
+      backgroundColor: AppTheme.cremeFundo,
       appBar: AppBar(
-        backgroundColor: AppTheme.fundoCreme,
+        backgroundColor: AppTheme.cremeFundo,
         elevation: 0,
         scrolledUnderElevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppTheme.textoEscuro),
-          onPressed: _voltar,
-        ),
-        title: _etapaAtual < 5
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: List.generate(5, (index) {
-                  return Container(
-                    width: 35,
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: index <= _etapaAtual
-                          ? AppTheme.turquesaPrincipal
-                          : Colors.grey.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  );
-                }),
-              )
-            : null,
+        automaticallyImplyLeading: false,
+        // Depois de salvo, não faz sentido voltar às etapas anteriores.
+        leading: naEtapaFinal
+            ? null
+            : IconButton(
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: AppTheme.textoPrincipal,
+                ),
+                onPressed: _voltar,
+              ),
+        title: naEtapaFinal ? null : _buildProgresso(),
         centerTitle: true,
         actions: [
-          if (_etapaAtual > 0 && _etapaAtual < 4)
+          if (podePular)
             TextButton(
               onPressed: _avancar,
               child: const Text(
@@ -162,10 +326,33 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
     );
   }
 
-  // 1️⃣ TELA: VAMOS COMEÇAR
+  Widget _buildProgresso() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(_totalEtapas, (index) {
+        return Container(
+          width: 35,
+          height: 4,
+          margin: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: BoxDecoration(
+            color: index <= _etapaAtual
+                ? AppTheme.aquaPrincipal
+                : Colors.grey.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        );
+      }),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Etapas
+  // ---------------------------------------------------------------------------
+
+  // 1️⃣ VAMOS COMEÇAR
   Widget _tela1VamosComecar() {
     return Padding(
-      padding: const EdgeInsets.all(24.0),
+      padding: const EdgeInsets.all(24),
       child: Column(
         children: [
           const Text(
@@ -184,33 +371,33 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
             style: TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
+              color: AppTheme.textoPrincipal,
               letterSpacing: -0.5,
             ),
           ),
           const SizedBox(height: 12),
           const Text(
-            'Dividimos a rotina do Ohmae para cuidar de tudo com você no seu tempo.',
+            'Dividimos a rotina do Ohmae para cuidar de tudo com você '
+            'no seu tempo.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: Colors.grey),
           ),
           const Spacer(),
-          // Ilustração Central em Formato de Grade Horizontal (Tags do Figma)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _construirTagInicial(
                 'Tudo num só lugar',
                 Icons.space_dashboard_outlined,
-                AppTheme.turquesaPrincipal,
+                AppTheme.aquaPrincipal,
               ),
-              const SizedBox(width: 8),
               _construirTagInicial(
                 'Dados seguros',
                 Icons.shield_outlined,
-                AppTheme.coralDestaque,
+                AppTheme.coralAlerta,
               ),
-              const SizedBox(width: 8),
               _construirTagInicial(
                 'Só 3 minutos',
                 Icons.timer_outlined,
@@ -219,32 +406,11 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
             ],
           ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.turquesaPrincipal.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.lock_outline,
-                  color: AppTheme.turquesaPrincipal,
-                  size: 18,
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Você está em um espaço seguro. As informações adicionadas pertencem apenas à sua família.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textoEscuro,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          _construirAviso(
+            icone: Icons.lock_outline,
+            cor: AppTheme.aquaPrincipal,
+            texto: 'Você está em um espaço seguro. As informações adicionadas '
+                'pertencem apenas à sua família.',
           ),
           const SizedBox(height: 24),
           _construirBotaoProximo('Adicionar criança', _avancar),
@@ -253,47 +419,31 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
     );
   }
 
-  // 2️⃣ TELA: QUEM É ESSA PESSOINHA
+  // 2️⃣ QUEM É ESSA PESSOINHA
   Widget _tela2QuemEEssaPessoinha() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Quem é essa pessoinha?',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Com detalhes chave que ajudam a personalizar cada cuidado.',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          // Seletor de Foto do Figma
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: AppTheme.coralDestaque.withOpacity(0.1),
-                  child: const Icon(
-                    Icons.add_a_photo_outlined,
-                    color: AppTheme.coralDestaque,
-                    size: 20,
-                  ),
+    return _paginaRolavel(
+      children: [
+        _titulo('Quem é essa pessoinha?'),
+        const SizedBox(height: 6),
+        _subtitulo('Com detalhes chave que ajudam a personalizar cada cuidado.'),
+        const SizedBox(height: 24),
+        _card(
+          raio: 20,
+          padding: 16,
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: AppTheme.coralAlerta.withValues(alpha: 0.1),
+                child: const Icon(
+                  Icons.add_a_photo_outlined,
+                  color: AppTheme.coralAlerta,
+                  size: 20,
                 ),
-                const SizedBox(width: 16),
-                const Column(
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -301,7 +451,7 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
-                        color: AppTheme.textoEscuro,
+                        color: AppTheme.textoPrincipal,
                       ),
                     ),
                     Text(
@@ -310,485 +460,488 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
                     ),
                   ],
                 ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {},
-                  child: const Text(
-                    'Adicionar',
-                    style: TextStyle(
-                      color: AppTheme.turquesaPrincipal,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Bloco do Formulário com os Checks Verdes Ativos do Layout
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              children: [
-                _construirInputFieldComCheck(
-                  _nomeController,
-                  'Nome completo',
-                  Icons.person_outline,
-                ),
-                const Divider(height: 24),
-                _construirInputFieldComCheck(
-                  _apelidoController,
-                  'Como chamar ela',
-                  Icons.favorite_border,
-                ),
-                const Divider(height: 24),
-                _construirInputFieldComCheck(
-                  _dataNascimentoController,
-                  'Data de nascimento',
-                  Icons.calendar_today_outlined,
-                ),
-                const Divider(height: 24),
-                DropdownButtonFormField<String>(
-                  value: _generoSelecionado,
-                  decoration: const InputDecoration(
-                    labelText: 'Gênero / Sexo',
-                    prefixIcon: Icon(Icons.child_care_outlined),
-                    border: InputBorder.none,
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'MENINO',
-                      child: Text('Menino (Davi)'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'MENINA',
-                      child: Text('Menina (Lia / Esther)'),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => _generoSelecionado = v!),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 32),
-          _construirBotaoProximo('Continuar', _avancar),
-        ],
-      ),
-    );
-  }
-
-  // 3️⃣ TELA: CUIDADOS QUE MERECEM ATENÇÃO
-  Widget _tela3CuidadosEAtencao() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Cuidados que merecem atenção',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Essas informações são opcionais e ajudam quem cuida a se organizar melhor.',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  color: AppTheme.turquesaPrincipal,
-                  size: 18,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Somente você e os cuidadores autorizados terão acesso a estes dados.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Form de Saúde Customizado com o Card Interno do Figma
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Informações de saúde',
+              ),
+              // TODO: implementar o seletor de foto (image_picker).
+              TextButton(
+                onPressed: () {},
+                child: const Text(
+                  'Adicionar',
                   style: TextStyle(
-                    fontSize: 14,
+                    color: AppTheme.aquaPrincipal,
                     fontWeight: FontWeight.bold,
-                    color: Colors.grey,
                   ),
                 ),
-                const SizedBox(height: 16),
-                _construirInputFieldComCheck(
-                  _alergiaController,
-                  'Alergias',
-                  Icons.healing_outlined,
-                ),
-                const Divider(height: 24),
-                _construirInputFieldComCheck(
-                  _restricoesAlimentaresController,
-                  'Restrições alimentares',
-                  Icons.flatware_outlined,
-                ),
-                const Divider(height: 24),
-                _construirInputFieldComCheck(
-                  _medicamentosController,
-                  'Medicamentos',
-                  Icons.medication_outlined,
-                ),
-                const Divider(height: 24),
-                _construirInputFieldComCheck(
-                  _condicoesSaudeController,
-                  'Condições de saúde',
-                  Icons.assignment_ind_outlined,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 32),
-          _construirBotaoProximo('Salvar e continuar', _avancar),
-        ],
-      ),
-    );
-  }
-
-  // 4️⃣ TELA: UM COMEÇO NO RITMO DA LIA
-  Widget _tela4RitmoInicial() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Um começo no ritmo da Lia',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Se adicione referências iniciais, a rotina pode mudar a qualquer momento!',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          // Lista de Seleções do Design do Figma com setinhas de Dropdown
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              children: [
-                _construirLinhaDropdownFigma(
-                  'Sono',
-                  'Dorme por volta das 20h',
-                  Icons.bedtime_outlined,
-                  const Color(0xff5EAEA4),
-                ),
-                const Divider(height: 24),
-                _construirLinhaDropdownFigma(
-                  'Alimentação',
-                  'Leite materno + introdução',
-                  Icons.flatware_outlined,
-                  const Color(0xffFCA690),
-                ),
-                const Divider(height: 24),
-                _construirLinhaDropdownFigma(
-                  'Banho',
-                  'À noite, antes de dormir',
-                  Icons.bathtub_outlined,
-                  const Color(0xffFCD067),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'Como está a rotina hoje?',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Botões de Seleção de Estado da Rotina
-          Row(
-            children: [
-              _construirBotaoEstadoRotina('Previsível', true),
-              const SizedBox(width: 8),
-              _construirBotaoEstadoRotina('Variável', false),
-              const SizedBox(width: 8),
-              _construirBotaoEstadoRotina('Criação rápida', false),
+              ),
             ],
           ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppTheme.amareloStatus.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.wb_sunny_outlined,
-                  color: AppTheme.amareloStatus,
-                  size: 18,
+        ),
+        const SizedBox(height: 20),
+        _card(
+          child: Column(
+            children: [
+              _construirInputFieldComCheck(
+                _nomeController,
+                'Nome completo',
+                Icons.person_outline,
+                textCapitalization: TextCapitalization.words,
+              ),
+              const Divider(height: 24),
+              _construirInputFieldComCheck(
+                _apelidoController,
+                'Como chamar a criança',
+                Icons.favorite_border,
+                textCapitalization: TextCapitalization.words,
+              ),
+              const Divider(height: 24),
+              _construirInputFieldComCheck(
+                _dataNascimentoController,
+                'Data de nascimento',
+                Icons.calendar_today_outlined,
+                readOnly: true,
+                onTap: _selecionarData,
+              ),
+              const Divider(height: 24),
+              DropdownButtonFormField<String>(
+                initialValue: _generoSelecionado,
+                decoration: const InputDecoration(
+                  labelText: 'Gênero / Sexo',
+                  prefixIcon: Icon(Icons.child_care_outlined),
+                  border: InputBorder.none,
                 ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'A Ohmae vai estruturar os cards de rotina usando esse padrão inicial para o dia a dia.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppTheme.textoEscuro,
-                      height: 1.3,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+                items: const [
+                  DropdownMenuItem(value: 'MENINO', child: Text('Menino')),
+                  DropdownMenuItem(value: 'MENINA', child: Text('Menina')),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _generoSelecionado = v);
+                },
+              ),
+            ],
           ),
-          const SizedBox(height: 32),
-          _construirBotaoProximo('Continuar', _avancar),
-        ],
-      ),
+        ),
+        const SizedBox(height: 32),
+        _construirBotaoProximo(
+          'Continuar',
+          _etapa2Valida ? _avancar : null,
+        ),
+      ],
     );
   }
 
-  // 5️⃣ TELA: QUEM CUIDA JUNTO COM VOCÊ
+  // 3️⃣ CUIDADOS QUE MERECEM ATENÇÃO
+  Widget _tela3CuidadosEAtencao() {
+    return _paginaRolavel(
+      children: [
+        _titulo('Cuidados que merecem atenção'),
+        const SizedBox(height: 6),
+        _subtitulo(
+          'Essas informações são opcionais e ajudam quem cuida a se '
+          'organizar melhor.',
+        ),
+        const SizedBox(height: 20),
+        _card(
+          raio: 14,
+          padding: 12,
+          child: const Row(
+            children: [
+              Icon(Icons.info_outline, color: AppTheme.aquaPrincipal, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Somente você e os cuidadores autorizados terão acesso '
+                  'a estes dados.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        _card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Informações de saúde',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _construirInputFieldComCheck(
+                _alergiaController,
+                'Alergias',
+                Icons.healing_outlined,
+              ),
+              const Divider(height: 24),
+              _construirInputFieldComCheck(
+                _restricoesAlimentaresController,
+                'Restrições alimentares',
+                Icons.flatware_outlined,
+              ),
+              const Divider(height: 24),
+              _construirInputFieldComCheck(
+                _medicamentosController,
+                'Medicamentos',
+                Icons.medication_outlined,
+              ),
+              const Divider(height: 24),
+              _construirInputFieldComCheck(
+                _condicoesSaudeController,
+                'Condições de saúde',
+                Icons.assignment_ind_outlined,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        _construirBotaoProximo('Salvar e continuar', _avancar),
+      ],
+    );
+  }
+
+  // 4️⃣ UM COMEÇO NO RITMO DA CRIANÇA
+  Widget _tela4RitmoInicial() {
+    return _paginaRolavel(
+      children: [
+        _titulo('Um começo no ritmo de $_nomeExibicao'),
+        const SizedBox(height: 6),
+        _subtitulo(
+          'Se adicionar referências iniciais, a rotina pode mudar a '
+          'qualquer momento!',
+        ),
+        const SizedBox(height: 24),
+        // TODO: exemplos visuais do layout; ainda não são editáveis nem salvos.
+        _card(
+          child: Column(
+            children: [
+              _construirLinhaDropdownFigma(
+                'Sono',
+                'Dorme por volta das 20h',
+                Icons.bedtime_outlined,
+                AppTheme.aquaPrincipal,
+              ),
+              const Divider(height: 24),
+              _construirLinhaDropdownFigma(
+                'Alimentação',
+                'Leite materno + introdução',
+                Icons.flatware_outlined,
+                AppTheme.coralAlerta,
+              ),
+              const Divider(height: 24),
+              _construirLinhaDropdownFigma(
+                'Banho',
+                'À noite, antes de dormir',
+                Icons.bathtub_outlined,
+                AppTheme.amareloStatus,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Como está a rotina hoje?',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textoPrincipal,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            _construirBotaoEstadoRotina('Previsível', 'PREVISIVEL'),
+            const SizedBox(width: 8),
+            _construirBotaoEstadoRotina('Variável', 'VARIAVEL'),
+            const SizedBox(width: 8),
+            _construirBotaoEstadoRotina('Criação rápida', 'RAPIDA'),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _construirAviso(
+          icone: Icons.wb_sunny_outlined,
+          cor: AppTheme.amareloStatus,
+          texto: 'A Ohmae vai estruturar os cards de rotina usando esse '
+              'padrão inicial para o dia a dia.',
+        ),
+        const SizedBox(height: 32),
+        _construirBotaoProximo('Continuar', _avancar),
+      ],
+    );
+  }
+
+  // 5️⃣ QUEM CUIDA JUNTO COM VOCÊ
   Widget _tela5ResponsaveisESeguranca() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Quem cuida junto com você?',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Adicione pessoas de confiança e deixe um contato para emergências.',
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
+    return _paginaRolavel(
+      children: [
+        _titulo('Quem cuida junto com você?'),
+        const SizedBox(height: 6),
+        _subtitulo(
+          'Adicione pessoas de confiança e deixe um contato para '
+          'emergências.',
+        ),
+        const SizedBox(height: 24),
+        _card(
+          raio: 20,
+          padding: 16,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
                       'Adicionar outro cuidador',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
-                        color: AppTheme.textoEscuro,
+                        color: AppTheme.textoPrincipal,
                       ),
                     ),
-                    Switch(
-                      value: true,
-                      activeColor: AppTheme.turquesaPrincipal,
-                      onChanged: (v) {},
-                    ),
-                  ],
-                ),
+                  ),
+                  Switch(
+                    value: _adicionarCuidador,
+                    activeTrackColor: AppTheme.aquaPrincipal,
+                    onChanged: (v) => setState(() => _adicionarCuidador = v),
+                  ),
+                ],
+              ),
+              if (_adicionarCuidador) ...[
                 const Divider(height: 24),
                 _construirInputFieldComCheck(
                   _responsavelController,
                   'Nome do responsável',
                   Icons.person_outline,
+                  textCapitalization: TextCapitalization.words,
                 ),
                 const Divider(height: 24),
                 _construirInputFieldComCheck(
                   _vinculoController,
-                  'Vínculo',
+                  'Vínculo (ex: Avó, Babá)',
                   Icons.family_restroom_outlined,
+                  textCapitalization: TextCapitalization.sentences,
                 ),
               ],
-            ),
+            ],
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'Contato de emergência',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-            ),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Contato de emergência',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textoPrincipal,
           ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: _construirInputFieldComCheck(
-              _contatoEmergenciaController,
-              'Nome e telefone',
-              Icons.phone_outlined,
-            ),
+        ),
+        const SizedBox(height: 12),
+        _card(
+          raio: 16,
+          padding: 16,
+          child: _construirInputFieldComCheck(
+            _contatoEmergenciaController,
+            'Nome e telefone',
+            Icons.phone_outlined,
+            keyboardType: TextInputType.text,
           ),
-          const SizedBox(height: 32),
-          _carregando
-              ? const Center(
-                  child: CircularProgressIndicator(
-                    color: AppTheme.turquesaPrincipal,
-                  ),
-                )
-              : _construirBotaoProximo('Revisar cadastro', _salvarNoSupabase),
-        ],
-      ),
+        ),
+        const SizedBox(height: 32),
+        _construirBotaoProximo(
+          'Concluir cadastro',
+          _carregando ? null : _salvarCrianca,
+          carregando: _carregando,
+        ),
+      ],
     );
   }
 
-  // 6️⃣ TELA: CADASTRO CONCLUÍDO (RESUMO DA LIA)
+  // 6️⃣ CADASTRO CONCLUÍDO
   Widget _tela6CadastroConcluido() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          const SizedBox(height: 20),
-          const CircleAvatar(
-            radius: 22,
-            backgroundColor: Color(0xffE2F3F0),
-            child: Icon(
-              Icons.check,
-              color: AppTheme.turquesaPrincipal,
-              size: 24,
-            ),
+    final alergia = _alergiaController.text.trim();
+    final cuidador = _responsavelController.text.trim();
+    final vinculo = _vinculoController.text.trim();
+
+    final itens = <Widget>[
+      _construirItemResumoFinal(
+        '${_nomeController.text.trim()} • ${_dataNascimentoController.text}',
+        Icons.cake_outlined,
+        AppTheme.aquaPrincipal,
+      ),
+      if (alergia.isNotEmpty)
+        _construirItemResumoFinal(
+          'Alergia: $alergia',
+          Icons.healing_outlined,
+          AppTheme.coralAlerta,
+        ),
+      if (_adicionarCuidador && cuidador.isNotEmpty)
+        _construirItemResumoFinal(
+          vinculo.isEmpty ? 'Cuidador: $cuidador' : '$vinculo • $cuidador',
+          Icons.people_outline,
+          Colors.blueGrey,
+        ),
+    ];
+
+    return _paginaRolavel(
+      centralizado: true,
+      children: [
+        const SizedBox(height: 20),
+        CircleAvatar(
+          radius: 22,
+          backgroundColor: AppTheme.aquaPrincipal.withValues(alpha: 0.15),
+          child: const Icon(
+            Icons.check,
+            color: AppTheme.aquaPrincipal,
+            size: 24,
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'CADASTRO CONCLUÍDO',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.turquesaPrincipal,
-              letterSpacing: 1,
-            ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'CADASTRO CONCLUÍDO',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.aquaPrincipal,
+            letterSpacing: 1,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Tudo pronto, Lia está na Ohmae',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
-              letterSpacing: -0.5,
-            ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Tudo pronto, $_nomeExibicao está na Ohmae',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textoPrincipal,
+            letterSpacing: -0.5,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'O perfil foi criado com sucesso. Você pode ajustar qualquer informação depois.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: Colors.grey),
-          ),
-          const SizedBox(height: 28),
-          // Bloco do Resumo do Bebê idêntico à última tela do Figma
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Resumo da Lia',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textoEscuro,
-                  ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'O perfil foi criado com sucesso. Você pode ajustar qualquer '
+          'informação depois.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: Colors.grey),
+        ),
+        const SizedBox(height: 28),
+        _card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Resumo de $_nomeExibicao',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textoPrincipal,
                 ),
-                const SizedBox(height: 16),
-                _construirItemResumoFinal(
-                  'Lia Martins • 14/05/2024',
-                  Icons.cake_outlined,
-                  const Color(0xff5EAEA4),
-                ),
-                const Divider(height: 20),
-                _construirItemResumoFinal(
-                  'Alergia a proteína do leite',
-                  Icons.healing_outlined,
-                  const Color(0xffFCA690),
-                ),
-                const Divider(height: 20),
-                _construirItemResumoFinal(
-                  'Sono às 20h • Banho à noite',
-                  Icons.access_time,
-                  const Color(0xffFCD067),
-                ),
-                const Divider(height: 20),
-                _construirItemResumoFinal(
-                  'Você • Rafael Martins',
-                  Icons.people_outline,
-                  Colors.blueGrey,
-                ),
+              ),
+              const SizedBox(height: 16),
+              for (var i = 0; i < itens.length; i++) ...[
+                if (i > 0) const Divider(height: 20),
+                itens[i],
               ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 40),
+        _construirBotaoProximo('Ir para o painel', _irParaDashboard),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Componentes reutilizáveis
+  // ---------------------------------------------------------------------------
+
+  Widget _paginaRolavel({
+    required List<Widget> children,
+    bool centralizado = false,
+  }) {
+    return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment:
+            centralizado ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _titulo(String texto) {
+    return Text(
+      texto,
+      style: const TextStyle(
+        fontSize: 24,
+        fontWeight: FontWeight.bold,
+        color: AppTheme.textoPrincipal,
+      ),
+    );
+  }
+
+  Widget _subtitulo(String texto) {
+    return Text(
+      texto,
+      style: const TextStyle(fontSize: 13, color: Colors.grey),
+    );
+  }
+
+  Widget _card({
+    required Widget child,
+    double raio = 24,
+    double padding = 20,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: AppTheme.superficieCard,
+        borderRadius: BorderRadius.circular(raio),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _construirAviso({
+    required IconData icone,
+    required Color cor,
+    required String texto,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppTheme.raioCampo),
+      ),
+      child: Row(
+        children: [
+          Icon(icone, color: cor, size: 18),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              texto,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppTheme.textoPrincipal,
+                height: 1.3,
+              ),
             ),
           ),
-          const SizedBox(height: 40),
-          _construirBotaoProximo('Ir para o painel', () => Navigator.pop(context)),
         ],
       ),
     );
   }
 
-  // Componentes Estilizados Baseados no Layout
   Widget _construirTagInicial(String texto, IconData icone, Color cor) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppTheme.superficieCard,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icone, color: cor, size: 20),
           const SizedBox(height: 6),
@@ -797,7 +950,7 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
             style: const TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: AppTheme.textoEscuro,
+              color: AppTheme.textoPrincipal,
             ),
           ),
         ],
@@ -805,26 +958,39 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
     );
   }
 
+  /// Campo sem borda (estilo do layout). O check só aparece quando preenchido.
   Widget _construirInputFieldComCheck(
     TextEditingController controller,
     String label,
-    IconData icone,
-  ) {
+    IconData icone, {
+    TextInputType keyboardType = TextInputType.text,
+    TextCapitalization textCapitalization = TextCapitalization.none,
+    bool readOnly = false,
+    VoidCallback? onTap,
+  }) {
+    final preenchido = controller.text.trim().isNotEmpty;
+
     return TextFormField(
       controller: controller,
+      readOnly: readOnly,
+      onTap: onTap,
+      keyboardType: keyboardType,
+      textCapitalization: textCapitalization,
       style: const TextStyle(
-        color: AppTheme.textoEscuro,
+        color: AppTheme.textoPrincipal,
         fontWeight: FontWeight.w500,
         fontSize: 14,
       ),
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icone, size: 20),
-        suffixIcon: const Icon(
-          Icons.check_circle,
-          color: Color(0xff5EAEA4),
-          size: 18,
-        ),
+        suffixIcon: preenchido
+            ? const Icon(
+                Icons.check_circle,
+                color: AppTheme.aquaPrincipal,
+                size: 18,
+              )
+            : null,
         border: InputBorder.none,
       ),
     );
@@ -840,7 +1006,7 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
       children: [
         CircleAvatar(
           radius: 16,
-          backgroundColor: cor.withOpacity(0.1),
+          backgroundColor: cor.withValues(alpha: 0.1),
           child: Icon(icone, color: cor, size: 16),
         ),
         const SizedBox(width: 14),
@@ -857,7 +1023,7 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: AppTheme.textoEscuro,
+                  color: AppTheme.textoPrincipal,
                 ),
               ),
             ],
@@ -868,26 +1034,31 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
     );
   }
 
-  Widget _construirBotaoEstadoRotina(String label, bool ativo) {
+  Widget _construirBotaoEstadoRotina(String label, String valor) {
+    final ativo = _estadoRotina == valor;
+
     return Expanded(
-      child: Container(
-        height: 38,
-        decoration: BoxDecoration(
-          color: ativo ? AppTheme.turquesaPrincipal : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: ativo
-                ? AppTheme.turquesaPrincipal
-                : Colors.grey.withOpacity(0.3),
+      child: GestureDetector(
+        onTap: () => setState(() => _estadoRotina = valor),
+        child: Container(
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: ativo ? AppTheme.aquaPrincipal : AppTheme.superficieCard,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: ativo
+                  ? AppTheme.aquaPrincipal
+                  : Colors.grey.withValues(alpha: 0.3),
+            ),
           ),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: ativo ? Colors.white : AppTheme.textoEscuro,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: ativo ? Colors.white : AppTheme.textoPrincipal,
+            ),
           ),
         ),
       ),
@@ -905,47 +1076,62 @@ class _ChildRegisterScreenState extends State<ChildRegisterScreen> {
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: AppTheme.textoEscuro,
+              color: AppTheme.textoPrincipal,
             ),
-          ),
-        ),
-        const Text(
-          'Editar',
-          style: TextStyle(
-            fontSize: 11,
-            color: Colors.grey,
-            fontWeight: FontWeight.bold,
           ),
         ),
       ],
     );
   }
 
-  Widget _construirBotaoProximo(String texto, VoidCallback acao) {
+  /// Botão principal. `acao == null` deixa o botão desabilitado (cinza).
+  Widget _construirBotaoProximo(
+    String texto,
+    VoidCallback? acao, {
+    bool carregando = false,
+  }) {
     return SizedBox(
       width: double.infinity,
       height: 54,
       child: ElevatedButton(
         onPressed: acao,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.turquesaPrincipal,
+          backgroundColor: AppTheme.aquaPrincipal,
           foregroundColor: Colors.white,
+          // Cinza quando desabilitado; mantém a cor aqua enquanto carrega.
+          disabledBackgroundColor: carregando
+              ? AppTheme.aquaPrincipal
+              : Colors.grey.withValues(alpha: 0.2),
+          disabledForegroundColor:
+              carregando ? Colors.white : Colors.grey.withValues(alpha: 0.5),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(AppTheme.raioCampo),
           ),
           elevation: 0,
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              texto,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward, size: 18),
-          ],
-        ),
+        child: carregando
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    texto,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.arrow_forward, size: 18),
+                ],
+              ),
       ),
     );
   }
